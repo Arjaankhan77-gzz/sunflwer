@@ -151,7 +151,7 @@
   </div>
 
   <div id="canvasWrap">
-    <canvas id="outputCanvas" width="800" height="600"></canvas>
+    <canvas id="outputCanvas" width="640" height="480"></canvas>
   </div>
   <div id="peopleCounter">👥 People: 0</div>
   <video id="inputVideo" playsinline autoplay muted></video>
@@ -269,7 +269,7 @@ const faceMesh = new FaceMesh({
   locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
 });
 faceMesh.setOptions({
-  maxNumFaces: 5,
+  maxNumFaces: 2,
   refineLandmarks: false,   // keep it light for better FPS
   minDetectionConfidence: 0.5,
   minTrackingConfidence: 0.5
@@ -279,7 +279,7 @@ const hands = new Hands({
   locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
 });
 hands.setOptions({
-  maxNumHands: 4,
+  maxNumHands: 1,
   modelComplexity: 0,   // "lite" model - faster, good enough for gestures
   minDetectionConfidence: 0.5,
   minTrackingConfidence: 0.5
@@ -302,8 +302,6 @@ function drawMagicShield(ctx, cx, cy, radius, angle) {
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(angle);
-  ctx.shadowColor = '#FFD700';
-  ctx.shadowBlur = 14;
   ctx.strokeStyle = '#FFD700';
   ctx.fillStyle = '#FFD700';
   ctx.lineWidth = 1.5;
@@ -377,8 +375,6 @@ function drawAll() {
     canvasCtx.save();
     canvasCtx.strokeStyle = '#00FF66';
     canvasCtx.lineWidth = 3;
-    canvasCtx.shadowColor = '#00FF66';
-    canvasCtx.shadowBlur = 8;
     canvasCtx.strokeRect(minX, minY, maxX - minX, maxY - minY);
 
     // Text is drawn locally mirrored so it reads correctly, since the whole
@@ -403,13 +399,7 @@ function drawAll() {
   const handednessArr = (latestHandResults && latestHandResults.multiHandedness) || [];
 
   handLandmarksArr.forEach((lm, i) => {
-    const label = handednessArr[i] ? handednessArr[i].label : 'Right';
-    const color = label === 'Left' ? '#FFAA00' : '#00FF88';
-    drawConnectors(canvasCtx, lm, HAND_CONNECTIONS, { color, lineWidth: 2 });
-    drawLandmarks(canvasCtx, lm, { color: '#FFFFFF', lineWidth: 1, radius: 3 });
-
-    // ---- Doctor Strange shield in the palm ----
-    // Palm center: average of wrist + the four finger base knuckles
+    // ---- Doctor Strange shield in the palm (hand skeleton dots/lines removed for a cleaner look) ----
     const palmIdxs = [0, 5, 9, 13, 17];
     let px = 0, py = 0;
     palmIdxs.forEach((idx) => { px += lm[idx].x; py += lm[idx].y; });
