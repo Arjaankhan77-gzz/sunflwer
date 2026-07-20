@@ -135,6 +135,75 @@
     text-shadow: 0 0 6px #00FF66;
     user-select: none;
   }
+
+  /* Big center countdown number for the selfie timer */
+  #countdownOverlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 100px;
+    font-weight: bold;
+    color: rgba(255, 215, 0, 0.9);
+    text-shadow: 0 0 20px #FFD700;
+    z-index: 8;
+    pointer-events: none;
+    display: none;
+  }
+
+  /* Name inputs (bottom-left, outside mirrored canvas) */
+  #nameInputs {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    z-index: 6;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  #nameInputs input {
+    width: 110px;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(0, 255, 102, 0.4);
+    border-radius: 6px;
+    color: #00FF66;
+    font-size: 11px;
+    padding: 4px 6px;
+    outline: none;
+  }
+
+  /* Color pickers (top-left) */
+  #colorControls {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.45);
+    padding: 6px 10px;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 215, 0, 0.3);
+    font-size: 11px;
+    color: #FFD700;
+  }
+
+  #colorControls label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  #colorControls input[type="color"] {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -142,18 +211,30 @@
 <div id="container">
   <div id="title">Facial and Hand Landmarks</div>
 
+  <div id="colorControls">
+    <label>Shield <input type="color" id="shieldColorPicker" value="#FFD700"></label>
+    <label>Box <input type="color" id="boxColorPicker" value="#00FF66"></label>
+  </div>
+
   <div id="zoomControls">
     <button id="zoomOutBtn" title="Zoom out">−</button>
     <span id="zoomLevelLabel">100%</span>
     <button id="zoomInBtn" title="Zoom in">+</button>
     <button id="zoomResetBtn" title="Reset zoom">⟳</button>
     <button id="screenshotBtn" title="Take screenshot">📸</button>
+    <button id="recordBtn" title="Start recording">🎥</button>
+    <button id="voiceBtn" title="Toggle voice commands">🎤</button>
   </div>
 
   <div id="canvasWrap">
     <canvas id="outputCanvas" width="640" height="480"></canvas>
   </div>
   <div id="peopleCounter">👥 People: 0</div>
+  <div id="countdownOverlay">3</div>
+  <div id="nameInputs">
+    <input id="face1NameInput" type="text" placeholder="Face1 name" maxlength="12">
+    <input id="face2NameInput" type="text" placeholder="Face2 name" maxlength="12">
+  </div>
   <video id="inputVideo" playsinline autoplay muted></video>
   <div id="statusMsg">Requesting camera access…</div>
 </div>
@@ -175,6 +256,9 @@ const canvasEl = document.getElementById('outputCanvas');
 const canvasCtx = canvasEl.getContext('2d');
 const statusMsg = document.getElementById('statusMsg');
 const peopleCounterEl = document.getElementById('peopleCounter');
+const face1NameInput = document.getElementById('face1NameInput');
+const face2NameInput = document.getElementById('face2NameInput');
+const countdownOverlay = document.getElementById('countdownOverlay');
 
 // FPS tracking, same idea as previousTime / currentTime in the Python version
 let previousTime = 0;
@@ -232,6 +316,9 @@ function classifyHand(landmarks) {
 const SMILE_WIDTH_RATIO_THRESHOLD = 1.15;
 const SMILE_CORNER_LIFT_THRESHOLD = 0.020;
 const SAD_CORNER_DROOP_THRESHOLD = -0.012;
+const MOUTH_OPEN_RATIO_THRESHOLD = 0.40;   // wide open mouth -> surprised
+const BROW_RAISE_RATIO_THRESHOLD = 0.34;   // eyebrows raised high -> surprised
+const BROW_FURROW_RATIO_THRESHOLD = 0.20;  // eyebrows pulled low/close -> angry
 
 function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -244,6 +331,10 @@ function getExpression(landmarks) {
   const lowerLip = landmarks[14];
   const leftEye = landmarks[33];
   const rightEye = landmarks[263];
+  const leftBrow = landmarks[105];
+  const rightBrow = landmarks[334];
+  const leftEyeTop = landmarks[159];
+  const rightEyeTop = landmarks[386];
 
   const interocular = dist(leftEye, rightEye) || 0.0001;
   const mouthWidth = dist(leftCorner, rightCorner);
@@ -253,13 +344,23 @@ function getExpression(landmarks) {
   const cornerAvgY = (leftCorner.y + rightCorner.y) / 2;
   const cornerLift = (mouthCenterY - cornerAvgY) / interocular;
 
+  const mouthOpenRatio = dist(upperLip, lowerLip) / interocular;
+  const browGap = ((leftEyeTop.y - leftBrow.y) + (rightEyeTop.y - rightBrow.y)) / 2;
+  const browRatio = browGap / interocular;
+
+  if (mouthOpenRatio > MOUTH_OPEN_RATIO_THRESHOLD && browRatio > BROW_RAISE_RATIO_THRESHOLD) {
+    return { label: 'Surprised', emoji: '😮' };
+  }
   if (widthRatio > SMILE_WIDTH_RATIO_THRESHOLD || cornerLift > SMILE_CORNER_LIFT_THRESHOLD) {
-    return { label: 'Happy', emoji: '😊', color: '#00FF66' };
+    return { label: 'Happy', emoji: '😊' };
+  }
+  if (browRatio < BROW_FURROW_RATIO_THRESHOLD && cornerLift <= 0) {
+    return { label: 'Angry', emoji: '😠' };
   }
   if (cornerLift < SAD_CORNER_DROOP_THRESHOLD) {
-    return { label: 'Sad', emoji: '😢', color: '#00FF66' };
+    return { label: 'Sad', emoji: '😢' };
   }
-  return { label: 'Neutral', emoji: '😐', color: '#00FF66' };
+  return { label: 'Neutral', emoji: '😐' };
 }
 
 // ---- MediaPipe model setup ------------------------------------------------
@@ -279,7 +380,7 @@ const hands = new Hands({
   locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
 });
 hands.setOptions({
-  maxNumHands: 1,
+  maxNumHands: 2,
   modelComplexity: 0,   // "lite" model - faster, good enough for gestures
   minDetectionConfidence: 0.5,
   minTrackingConfidence: 0.5
@@ -288,12 +389,56 @@ hands.setOptions({
 let latestFaceResults = null;
 let latestHandResults = null;
 let previousHandAngle = null; // tracks rotation for steering-wheel style zoom control
+let prevThumbsUp = false;
+let prevOpenPalm = false;
+let countdownActive = false;
+let countdownValue = 0;
+let countdownIntervalId = null;
 
 // If zoom direction feels backwards on your setup, flip this to true.
 const INVERT_ROTATION_DIRECTION = false;
 
+// Customizable colors (changed live via the color pickers)
+let SHIELD_COLOR = '#FFD700';
+let BOX_COLOR = '#00FF66';
+
 faceMesh.onResults((results) => { latestFaceResults = results; });
 hands.onResults((results) => { latestHandResults = results; });
+
+// ---- Simple sound effects (Web Audio oscillator beeps, no audio files needed) ----
+let audioCtx = null;
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+function playBeep(freq, duration, type = 'sine', volume = 0.15) {
+  try {
+    const ctx = getAudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(volume, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration / 1000);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + duration / 1000);
+  } catch (e) { /* audio may be blocked until first user interaction - safe to ignore */ }
+}
+function playZoomSound(zoomingIn) {
+  playBeep(zoomingIn ? 700 : 400, 90, 'sine', 0.08);
+}
+function playScreenshotSound() {
+  playBeep(1000, 60, 'square', 0.12);
+  setTimeout(() => playBeep(1400, 70, 'square', 0.12), 70);
+}
+function playTingSound() {
+  playBeep(1200, 150, 'triangle', 0.1);
+}
+function playClickSound() {
+  playBeep(500, 60, 'square', 0.08);
+}
 
 // ---- Doctor Strange style glowing shield, drawn in the palm --------------
 // Deliberately kept simple: two rings, an 8-point star pattern, and tick
@@ -302,8 +447,8 @@ function drawMagicShield(ctx, cx, cy, radius, angle) {
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(angle);
-  ctx.strokeStyle = '#FFD700';
-  ctx.fillStyle = '#FFD700';
+  ctx.strokeStyle = SHIELD_COLOR;
+  ctx.fillStyle = SHIELD_COLOR;
   ctx.lineWidth = 1.5;
   ctx.globalAlpha = 0.9;
 
@@ -344,6 +489,20 @@ function drawMagicShield(ctx, cx, cy, radius, angle) {
   ctx.restore();
 }
 
+// ---- Energy beam connecting two shields when both hands are visible ----
+function drawEnergyBeam(ctx, p1, p2) {
+  ctx.save();
+  const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 150);
+  ctx.strokeStyle = SHIELD_COLOR;
+  ctx.globalAlpha = 0.35 + 0.35 * pulse;
+  ctx.lineWidth = 3 + pulse * 2;
+  ctx.beginPath();
+  ctx.moveTo(p1.x, p1.y);
+  ctx.lineTo(p2.x, p2.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
 // ---- Main draw + logic pass (runs once per camera frame) -----------------
 function drawAll() {
   const bgImage = (latestFaceResults && latestFaceResults.image) ||
@@ -371,9 +530,11 @@ function drawAll() {
     minX -= pad; minY -= pad; maxX += pad; maxY += pad;
 
     const expression = getExpression(landmarks);
+    const nameInput = idx === 0 ? face1NameInput : face2NameInput;
+    const displayName = (nameInput && nameInput.value.trim()) || `Face${idx + 1}`;
 
     canvasCtx.save();
-    canvasCtx.strokeStyle = '#00FF66';
+    canvasCtx.strokeStyle = BOX_COLOR;
     canvasCtx.lineWidth = 3;
     canvasCtx.strokeRect(minX, minY, maxX - minX, maxY - minY);
 
@@ -381,9 +542,9 @@ function drawAll() {
     // canvasWrap is flipped with CSS scaleX(-1)
     canvasCtx.scale(-1, 1);
     canvasCtx.font = "bold 14px 'Segoe UI', Arial, sans-serif";
-    canvasCtx.fillStyle = '#00FF66';
+    canvasCtx.fillStyle = BOX_COLOR;
     canvasCtx.textAlign = 'right';
-    canvasCtx.fillText(`Face${idx + 1}: ${expression.label}`, -minX, minY - 6);
+    canvasCtx.fillText(`${displayName}: ${expression.label}`, -minX, minY - 6);
 
     // Emoji next to the face, drawn a bit bigger
     canvasCtx.font = "20px 'Segoe UI', Arial, sans-serif";
@@ -397,6 +558,7 @@ function drawAll() {
   // ---- Hands: draw all detected hands, alternating colors per handedness ----
   const handLandmarksArr = (latestHandResults && latestHandResults.multiHandLandmarks) || [];
   const handednessArr = (latestHandResults && latestHandResults.multiHandedness) || [];
+  const palmCenters = [];
 
   handLandmarksArr.forEach((lm, i) => {
     // ---- Doctor Strange shield in the palm (hand skeleton dots/lines removed for a cleaner look) ----
@@ -418,7 +580,13 @@ function drawAll() {
     const shieldRadius = handSize * 0.9;
 
     drawMagicShield(canvasCtx, px, py, shieldRadius, handAngle);
+    palmCenters.push({ x: px, y: py });
   });
+
+  // If both hands are visible, connect their shields with a pulsing energy beam
+  if (palmCenters.length === 2) {
+    drawEnergyBeam(canvasCtx, palmCenters[0], palmCenters[1]);
+  }
 
   // ---- FPS calculation, same formula as the Python version ----
   const currentTime = performance.now() / 1000;
@@ -482,14 +650,20 @@ function drawAll() {
     previousHandAngle = null; // reset once the steering hand leaves the frame
   }
 
-  if (thumbsUpDetected) {
-    if (now - lastScreenshotTime > SCREENSHOT_COOLDOWN_MS) {
-      takeScreenshot();
-      lastScreenshotTime = now;
-    }
-    gestureMsg = "👍 Thumbs up — screenshot saved!";
-  } else if (openPalmDetected) {
+  if (thumbsUpDetected && !prevThumbsUp && !countdownActive && (now - lastScreenshotTime > SCREENSHOT_COOLDOWN_MS)) {
+    startCountdownScreenshot();
+  }
+  prevThumbsUp = thumbsUpDetected;
+
+  if (openPalmDetected && !prevOpenPalm) {
     zoomReset();
+    playClickSound();
+  }
+  prevOpenPalm = openPalmDetected;
+
+  if (countdownActive) {
+    gestureMsg = `📸 Get ready… ${countdownValue}`;
+  } else if (openPalmDetected) {
     gestureMsg = "🖐 Open palm — zoom reset";
   }
 
@@ -500,6 +674,29 @@ function drawAll() {
   } else {
     statusMsg.textContent = gestureMsg;
   }
+}
+
+// ---- Countdown selfie timer: thumbs up starts a 3-2-1 countdown, then snaps ----
+function startCountdownScreenshot() {
+  countdownActive = true;
+  countdownValue = 3;
+  countdownOverlay.style.display = 'block';
+  countdownOverlay.textContent = countdownValue;
+  playTingSound();
+
+  countdownIntervalId = setInterval(() => {
+    countdownValue--;
+    if (countdownValue <= 0) {
+      clearInterval(countdownIntervalId);
+      countdownOverlay.style.display = 'none';
+      countdownActive = false;
+      takeScreenshot();
+      lastScreenshotTime = Date.now();
+    } else {
+      countdownOverlay.textContent = countdownValue;
+      playTingSound();
+    }
+  }, 1000);
 }
 
 // ---- Camera bootstrap ---------------------------------------------------
