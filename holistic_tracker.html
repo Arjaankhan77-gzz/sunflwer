@@ -172,49 +172,12 @@
     padding: 4px 6px;
     outline: none;
   }
-
-  /* Color pickers (top-left) */
-  #colorControls {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    z-index: 6;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: rgba(0, 0, 0, 0.45);
-    padding: 6px 10px;
-    border-radius: 20px;
-    border: 1px solid rgba(255, 215, 0, 0.3);
-    font-size: 11px;
-    color: #FFD700;
-  }
-
-  #colorControls label {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  #colorControls input[type="color"] {
-    width: 22px;
-    height: 22px;
-    padding: 0;
-    border: none;
-    background: none;
-    cursor: pointer;
-  }
 </style>
 </head>
 <body>
 
 <div id="container">
   <div id="title">Facial and Hand Landmarks</div>
-
-  <div id="colorControls">
-    <label>Shield <input type="color" id="shieldColorPicker" value="#FFD700"></label>
-    <label>Box <input type="color" id="boxColorPicker" value="#00FF66"></label>
-  </div>
 
   <div id="zoomControls">
     <button id="zoomOutBtn" title="Zoom out">−</button>
@@ -223,7 +186,6 @@
     <button id="zoomResetBtn" title="Reset zoom">⟳</button>
     <button id="screenshotBtn" title="Take screenshot">📸</button>
     <button id="recordBtn" title="Start recording">🎥</button>
-    <button id="voiceBtn" title="Toggle voice commands">🎤</button>
   </div>
 
   <div id="canvasWrap">
@@ -324,7 +286,21 @@ function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-function getExpression(landmarks) {
+// Mood -> box/label color mapping
+const MOOD_COLORS = {
+  Happy: '#FFFF00',      // yellow
+  Sad: '#B266FF',        // purple
+  Angry: '#FF3333',      // red
+  Surprised: '#00CFFF',  // light blue
+  Neutral: '#00FF66'     // green (default)
+};
+
+// Rolling-average smoothing per face slot (0 or 1) so the reading doesn't
+// flicker frame-to-frame - makes detection feel much more stable/accurate.
+const EXPRESSION_HISTORY_SIZE = 6;
+const expressionHistory = [[], []];
+
+function getExpression(landmarks, faceIdx) {
   const leftCorner = landmarks[61];
   const rightCorner = landmarks[291];
   const upperLip = landmarks[13];
@@ -348,19 +324,36 @@ function getExpression(landmarks) {
   const browGap = ((leftEyeTop.y - leftBrow.y) + (rightEyeTop.y - rightBrow.y)) / 2;
   const browRatio = browGap / interocular;
 
-  if (mouthOpenRatio > MOUTH_OPEN_RATIO_THRESHOLD && browRatio > BROW_RAISE_RATIO_THRESHOLD) {
-    return { label: 'Surprised', emoji: '😮' };
+  // Push this frame's raw metrics into the rolling history for this face slot
+  const idx = faceIdx === 0 || faceIdx === 1 ? faceIdx : 0;
+  const history = expressionHistory[idx];
+  history.push({ widthRatio, cornerLift, mouthOpenRatio, browRatio });
+  if (history.length > EXPRESSION_HISTORY_SIZE) history.shift();
+
+  // Average over the history window to smooth out jitter
+  const avg = history.reduce((acc, h) => {
+    acc.widthRatio += h.widthRatio / history.length;
+    acc.cornerLift += h.cornerLift / history.length;
+    acc.mouthOpenRatio += h.mouthOpenRatio / history.length;
+    acc.browRatio += h.browRatio / history.length;
+    return acc;
+  }, { widthRatio: 0, cornerLift: 0, mouthOpenRatio: 0, browRatio: 0 });
+
+  let label;
+  if (avg.mouthOpenRatio > MOUTH_OPEN_RATIO_THRESHOLD && avg.browRatio > BROW_RAISE_RATIO_THRESHOLD) {
+    label = 'Surprised';
+  } else if (avg.widthRatio > SMILE_WIDTH_RATIO_THRESHOLD || avg.cornerLift > SMILE_CORNER_LIFT_THRESHOLD) {
+    label = 'Happy';
+  } else if (avg.browRatio < BROW_FURROW_RATIO_THRESHOLD && avg.cornerLift <= 0) {
+    label = 'Angry';
+  } else if (avg.cornerLift < SAD_CORNER_DROOP_THRESHOLD) {
+    label = 'Sad';
+  } else {
+    label = 'Neutral';
   }
-  if (widthRatio > SMILE_WIDTH_RATIO_THRESHOLD || cornerLift > SMILE_CORNER_LIFT_THRESHOLD) {
-    return { label: 'Happy', emoji: '😊' };
-  }
-  if (browRatio < BROW_FURROW_RATIO_THRESHOLD && cornerLift <= 0) {
-    return { label: 'Angry', emoji: '😠' };
-  }
-  if (cornerLift < SAD_CORNER_DROOP_THRESHOLD) {
-    return { label: 'Sad', emoji: '😢' };
-  }
-  return { label: 'Neutral', emoji: '😐' };
+
+  const emojiMap = { Happy: '😊', Sad: '😢', Angry: '😠', Surprised: '😮', Neutral: '😐' };
+  return { label, emoji: emojiMap[label], color: MOOD_COLORS[label] };
 }
 
 // ---- MediaPipe model setup ------------------------------------------------
