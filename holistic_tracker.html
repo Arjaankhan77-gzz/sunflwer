@@ -610,7 +610,13 @@ function drawAll() {
   // ---- Steering-wheel zoom: rotate your hand like turning a wheel ----
   // Uses the first detected hand as the "steering hand". Rotating clockwise
   // (like turning a wheel right) zooms in; counter-clockwise zooms out.
-  if (totalHands >= 1) {
+  // NOTE: this is skipped while that hand is doing a thumbs-up or open-palm
+  // gesture, since the natural hand tilt during those gestures was previously
+  // being misread as a steering rotation and triggering an unwanted zoom.
+  const steeringHandGesture = totalHands >= 1 ? classifyHand(handLandmarksArr[0]) : null;
+  const steeringHandBusy = steeringHandGesture === 'thumbsUp' || steeringHandGesture === 'openPalm';
+
+  if (totalHands >= 1 && !steeringHandBusy) {
     const wrist = handLandmarksArr[0][0];
     const middleMcp = handLandmarksArr[0][9];
     const currentAngle = Math.atan2(
@@ -640,7 +646,9 @@ function drawAll() {
     }
     previousHandAngle = currentAngle;
   } else {
-    previousHandAngle = null; // reset once the steering hand leaves the frame
+    // Reset whenever there's no hand, or the hand is busy with another gesture,
+    // so we don't get a big stale-angle jump when steering resumes afterward.
+    previousHandAngle = null;
   }
 
   if (thumbsUpDetected && !prevThumbsUp && !countdownActive && (now - lastScreenshotTime > SCREENSHOT_COOLDOWN_MS)) {
